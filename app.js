@@ -4,7 +4,7 @@ let state={token:null,user:null,sets:[],cards:[],owned:new Set(),currentSet:"",a
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
 function toast(msg){$("toast").textContent=msg;$("toast").style.display="block";setTimeout(()=>$("toast").style.display="none",2800)}
-async function api(action,data={}){if(API_URL.startsWith("PASTE_"))throw new Error("Connect the Google Apps Script URL in app.js first.");const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action,...data,token:state.token})});const j=await r.json();if(!j.ok)throw new Error(j.error||"Request failed");return j}
+async function api(action,data={}){if(API_URL.startsWith("PASTE_"))throw new Error("Connect the Google Apps Script URL in app.js first.");const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action,...data,token:state.token})});const j=await r.json();if(!j.success)throw new Error(j.message||j.error||"Request failed");return j}
 
 document.querySelectorAll(".auth-tab").forEach(b=>b.onclick=()=>showAuth(b.dataset.auth));
 function showAuth(mode){document.querySelectorAll(".auth-tab").forEach(b=>b.classList.toggle("active",b.dataset.auth===mode));$("loginForm").hidden=mode!=="login";$("registerForm").hidden=mode!=="register"}
