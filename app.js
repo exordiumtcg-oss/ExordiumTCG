@@ -1,4 +1,4 @@
-const API_URL="https://script.google.com/macros/s/AKfycbyaNd6MyhbsrlJIATUQcagVkk7AjO0j2kYOAZ7fbbaai1FptfIJHksqb2asPhZ5HlUlAA/exec";
+const API_URL="https://script.google.com/macros/s/AKfycbyaNd6MyhbsrlJIATUQcagVkk7AjO0j2kYOAZ7fbbaai1FptfIJHksqb2asPhZ5HlUlAA/exec"; // v2
 let state={token:null,user:null,sets:[],cards:[],owned:new Set(),currentSet:"",allOwned:0};
 
 const $=id=>document.getElementById(id);
