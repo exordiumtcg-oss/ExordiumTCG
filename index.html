@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EXORDIUM — Pokémon Card Checklist</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="toast"></div>
+
+<!-- AUTH -->
+<section id="authView" class="auth-shell">
+  <div class="auth-glow"></div>
+  <div class="auth-brand">
+    <div class="logo-mark">◈</div>
+    <div class="logo-word">EXORDIUM</div>
+    <div class="logo-sub">TRADING CARD GAME</div>
+    <div class="auth-copy">
+      <span>INDONESIAN POKÉMON TCG</span>
+      <h1>Your collection.<br><em>One checklist.</em></h1>
+      <p>Track every card across every Indonesian Pokémon TCG series.</p>
+    </div>
+  </div>
+  <div class="auth-card">
+    <div class="auth-tabs">
+      <button class="auth-tab active" data-auth="login">LOGIN</button>
+      <button class="auth-tab" data-auth="register">REGISTER</button>
+    </div>
+
+    <form id="loginForm">
+      <div class="form-title">Welcome back</div>
+      <div class="form-sub">Log in to continue your collection.</div>
+      <label>Username, email or phone<input id="loginIdentity" required autocomplete="username" placeholder="Enter username, email or phone"></label>
+      <label>Password<input id="loginPassword" type="password" required autocomplete="current-password" placeholder="Enter password"></label>
+      <button class="primary-btn" type="submit">LOG IN <span>→</span></button>
+    </form>
+
+    <form id="registerForm" hidden>
+      <div class="form-title">Create your account</div>
+      <div class="form-sub">Start building your collection.</div>
+      <label>Username<input id="regUsername" required minlength="3" placeholder="Choose a username"></label>
+      <label>Name<input id="regName" required placeholder="Your name"></label>
+      <label>Email<input id="regEmail" type="email" required placeholder="you@example.com"></label>
+      <label>Phone number<input id="regPhone" required placeholder="+62..."></label>
+      <label>Password<input id="regPassword" type="password" required minlength="8" placeholder="Minimum 8 characters"></label>
+      <label>Re-enter password<input id="regPassword2" type="password" required minlength="8" placeholder="Repeat password"></label>
+      <button class="primary-btn" type="submit">CREATE ACCOUNT <span>→</span></button>
+    </form>
+  </div>
+</section>
+
+<!-- APP -->
+<section id="appView" class="app-shell" hidden>
+  <aside class="sidebar">
+    <div class="side-logo">
+      <div class="logo-mark small">◈</div>
+      <div><div class="logo-word">EXORDIUM</div><div class="logo-sub">TRADING CARD GAME</div></div>
+    </div>
+
+    <nav>
+      <div class="nav-label">COLLECTION</div>
+      <button class="nav-item active" data-nav="dashboard"><span>⌂</span> Dashboard</button>
+      <button class="nav-item" data-nav="cards"><span>▣</span> All Cards</button>
+      <button class="nav-item" data-nav="sets"><span>◈</span> By Set</button>
+      <button class="nav-item" data-nav="collections"><span>☆</span> Collections</button>
+      <button class="nav-item" data-nav="wishlist"><span>♡</span> Wishlist</button>
+
+      <div class="nav-label">SYSTEM</div>
+      <button id="settingsBtn" class="nav-item" hidden><span>⚙</span> Settings</button>
+      <button class="nav-item" id="logoutBtn"><span>↪</span> Log out</button>
+    </nav>
+
+    <div class="side-vault">
+      <b>EXORDIUM TCG</b>
+      <strong>THE VAULT</strong>
+      <p>Premium cards.<br>For the true collectors.</p>
+    </div>
+    <div class="copyright">© 2026 EXORDIUM TCG<br>All rights reserved.</div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="global-search">
+        <span>⌕</span><input id="search" placeholder="Search card name or code..." aria-label="Search cards"><kbd>Ctrl K</kbd>
+      </div>
+      <div class="top-actions">
+        <button class="sync-btn" id="syncBtn"><span>▦</span> Sync with Sheets <i>↻</i></button>
+        <button class="icon-btn" id="themeBtn" title="Toggle theme">☾</button>
+        <button class="avatar-btn" id="profileBtn">◉</button>
+      </div>
+    </header>
+
+    <div class="content">
+      <div class="page-head">
+        <div>
+          <div class="eyebrow">YOUR COLLECTION</div>
+          <h2 id="setTitle">Latest Series</h2>
+          <p id="setMeta">Loading your collection...</p>
+        </div>
+        <select id="setSelect" class="set-select"></select>
+      </div>
+
+      <section class="overview">
+        <div class="featured">
+          <div class="feature-bg"></div>
+          <div class="feature-copy">
+            <div class="eyebrow">LATEST SERIES</div>
+            <h1 id="featureTitle">Loading…</h1>
+            <div class="series-chip" id="featureChip">—</div>
+            <div class="feature-stat"><b id="featureOwned">0</b> / <span id="featureTotal">0</span> cards collected</div>
+            <button id="openLatestBtn" class="outline-btn">VIEW COLLECTION <span>→</span></button>
+          </div>
+          <div class="feature-card-placeholder" id="featureImageWrap">
+            <div class="card-glow"></div><img id="featureImage" alt="Featured Pokémon card">
+          </div>
+          <div class="dots"><i class="active"></i><i></i><i></i><i></i></div>
+        </div>
+
+        <div class="intelligence">
+          <div class="panel-title">COLLECTION INTELLIGENCE</div>
+          <div class="stat-grid">
+            <div class="stat"><div class="stat-icon gold">◇</div><div><span>Total Cards</span><b id="totalCards">0</b><small>Across all sets</small></div></div>
+            <div class="stat"><div class="stat-icon green">▣</div><div><span>Owned</span><b id="totalOwned">0</b><small>Cards collected</small></div></div>
+            <div class="stat"><div class="stat-icon purple">◒</div><div><span>Completion</span><b id="totalPercent">0%</b><small>Collection progress</small></div></div>
+            <div class="stat"><div class="stat-icon red">×</div><div><span>Missing</span><b id="totalMissing">0</b><small>Still to collect</small></div></div>
+          </div>
+          <div class="progress-panel">
+            <div><span>Current set progress</span><b id="setPercent">0%</b></div>
+            <div class="progress"><i id="progressBar"></i></div>
+          </div>
+        </div>
+      </section>
+
+      <div class="toolbar">
+        <select id="raritySelect"><option value="">All Rarities</option></select>
+        <select id="sortSelect"><option value="number">Card Number</option><option value="name">Card Name</option></select>
+        <div class="view-toggle"><button class="active">▦</button><button>☷</button></div>
+      </div>
+
+      <section id="cards" class="card-grid"></section>
+      <div id="empty" class="empty" hidden>No cards match your search.</div>
+    </div>
+  </main>
+</section>
+
+<!-- ADMIN -->
+<div id="adminModal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head"><div><div class="eyebrow">SYSTEM</div><h3>User Management</h3></div><button id="closeAdmin" class="close">×</button></div>
+    <div id="usersTable"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
