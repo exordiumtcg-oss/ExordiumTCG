@@ -1,55 +1,857 @@
-const API_URL="https://script.google.com/macros/s/AKfycbyaNd6MyhbsrlJIATUQcagVkk7AjO0j2kYOAZ7fbbaai1FptfIJHksqb2asPhZ5HlUlAA/exec"; // v2
-let state={token:null,user:null,sets:[],cards:[],owned:new Set(),currentSet:"",allOwned:0};
+const CONFIG = {
+  SHEET_ID: '1reGPAmWECa9M9s-Pujfp1fO-DHoGmU_msZFCm2TLwq8',
+  SECRET_KEY: 'EXOEXO',
+  USERS_SHEET: 'Users',
+  OWNED_SHEET: 'Owned',
+  ADMIN_USERNAME: 'admin',
+  ADMIN_PASSWORD: '12345678'
+};
 
-const $=id=>document.getElementById(id);
-const esc=s=>String(s??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]));
-function toast(msg){$("toast").textContent=msg;$("toast").style.display="block";setTimeout(()=>$("toast").style.display="none",2800)}
-async function api(action,data={}){if(API_URL.startsWith("PASTE_"))throw new Error("Connect the Google Apps Script URL in app.js first.");const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({action,...data,token:state.token})});const j=await r.json();if(j.success===false)throw new Error(j.message||"Request failed");return j}
 
-document.querySelectorAll(".auth-tab").forEach(b=>b.onclick=()=>showAuth(b.dataset.auth));
-function showAuth(mode){document.querySelectorAll(".auth-tab").forEach(b=>b.classList.toggle("active",b.dataset.auth===mode));$("loginForm").hidden=mode!=="login";$("registerForm").hidden=mode!=="register"}
-$("loginForm").onsubmit=async e=>{e.preventDefault();try{const j=await api("login",{identity:$("loginIdentity").value.trim(),password:$("loginPassword").value});state.token=j.token;state.user=j.user;localStorage.setItem("pokemonToken",state.token);await boot()}catch(x){toast(x.message)}};
-$("loginPassword").onkeydown=e=>{if(e.key==="Enter")$("loginForm").requestSubmit()};
-$("registerForm").onsubmit=async e=>{e.preventDefault();if($("regPassword").value!==$("regPassword2").value)return toast("Passwords do not match.");try{await api("register",{username:$("regUsername").value.trim(),name:$("regName").value.trim(),email:$("regEmail").value.trim(),phone:$("regPhone").value.trim(),password:$("regPassword").value});toast("Account created. Please log in.");showAuth("login");$("loginIdentity").value=$("regUsername").value.trim()}catch(x){toast(x.message)}};
+/* =========================
+   BASIC HELPERS
+========================= */
 
-async function boot(){
- $("authView").hidden=true;$("appView").hidden=false;
- try{const j=await api("bootstrap");state.sets=j.sets;renderSets();await loadSet(state.sets.at(-1)?.name);await loadTotals()}catch(x){toast(x.message)}
+function getDB() {
+  return SpreadsheetApp.openById(CONFIG.SHEET_ID);
 }
-function renderSets(){const s=$("setSelect");s.innerHTML=state.sets.map(x=>`<option value="${esc(x.name)}">${esc(x.name)}</option>`).join("");s.onchange=()=>loadSet(s.value);$("openLatestBtn").onclick=()=>loadSet(state.sets.at(-1)?.name)}
-async function loadSet(name){
- if(!name)return;state.currentSet=name;$("setSelect").value=name;
- try{const j=await api("cards",{setName:name});state.cards=j.cards;state.owned=new Set(j.owned);
-  $("setTitle").textContent=name;$("setMeta").textContent=`${state.cards.length} cards in this series`;
-  $("featureTitle").textContent=name;$("featureChip").textContent=j.cards[0]?.setCode||"SET";
-  $("featureOwned").textContent=state.owned.size;$("featureTotal").textContent=state.cards.length;
-  if(j.cards[0]?.imageUrl)$("featureImage").src=j.cards[0].imageUrl; else $("featureImage").removeAttribute("src");
-  renderRarities();renderCards();renderProgress();
- }catch(x){toast(x.message)}
-}
-function renderRarities(){const values=[...new Set(state.cards.map(c=>c.rarity).filter(Boolean))].sort();$("raritySelect").innerHTML='<option value="">All Rarities</option>'+values.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join("")}
-function filteredCards(){const q=$("search").value.trim().toLowerCase(),r=$("raritySelect").value,s=$("sortSelect").value;
- let a=state.cards.filter(c=>(!q||String(c.id).toLowerCase().includes(q)||String(c.name).toLowerCase().includes(q))&&(!r||c.rarity===r));
- a.sort((x,y)=>s==="name"?x.name.localeCompare(y.name):String(x.id).localeCompare(String(y.id),undefined,{numeric:true}));
- return a
-}
-function renderCards(){const a=filteredCards();$("cards").innerHTML=a.map(c=>`<article class="card-item ${state.owned.has(String(c.id))?"owned":""}">
- <div class="card-img">${state.owned.has(String(c.id))?'<span class="owned-badge">OWNED</span>':""}<img loading="lazy" src="${esc(c.imageUrl)}" alt="${esc(c.name)}" onerror="this.style.opacity=.15"></div>
- <div class="card-name" title="${esc(c.name)}">${esc(c.name)}</div><div class="card-number">${esc(c.id)} / ${esc(c.totalSetNumber)}</div>
- <div class="card-bottom"><span class="rarity">${esc(c.rarity||"")}</span><label class="check"><input type="checkbox" data-id="${esc(c.id)}" ${state.owned.has(String(c.id))?"checked":""}> Owned</label></div></article>`).join("");
- $("empty").hidden=a.length>0;document.querySelectorAll(".check input").forEach(x=>x.onchange=()=>toggleOwned(x.dataset.id,x.checked))}
-async function toggleOwned(id,checked){if(checked)state.owned.add(String(id));else state.owned.delete(String(id));renderCards();renderProgress();try{await api("setOwned",{setName:state.currentSet,cardId:String(id),owned:checked});loadTotals()}catch(x){toast(x.message)}}
-function renderProgress(){const total=state.cards.length,owned=state.owned.size,p=total?Math.round(owned/total*100):0;$("setPercent").textContent=p+"%";$("progressBar").style.width=p+"%";$("featureOwned").textContent=owned;$("featureTotal").textContent=total}
-async function loadTotals(){try{const j=await api("collectionStats");state.allOwned=j.owned;$("totalCards").textContent=j.total;$("totalOwned").textContent=j.owned;$("totalMissing").textContent=Math.max(0,j.total-j.owned);$("totalPercent").textContent=(j.total?Math.round(j.owned/j.total*100):0)+"%"}catch(e){}}
-$("search").oninput=renderCards;$("raritySelect").onchange=renderCards;$("sortSelect").onchange=renderCards;
-$("syncBtn").onclick=async()=>{try{await loadSet(state.currentSet);await loadTotals();toast("Synced with Google Sheets.")}catch(e){toast(e.message)}};
-$("logoutBtn").onclick=()=>{localStorage.removeItem("pokemonToken");location.reload()};
-$("themeBtn").onclick=()=>document.body.classList.toggle("light");
-document.addEventListener("keydown",e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="k"){e.preventDefault();$("search").focus()}});
-$("settingsBtn").onclick=async()=>{try{const j=await api("adminUsers");$("usersTable").innerHTML=j.users.map(u=>`<div class="user-row"><div><b>${esc(u.username)}</b><div class="muted">${esc(u.name)}</div></div><div>${esc(u.email)}</div><div>${esc(u.phone)}</div><div>${esc(u.role)}</div><button class="mini" onclick="resetUser('${esc(u.username)}')">Reset password</button><button class="danger" onclick="deleteUser('${esc(u.username)}')">Delete</button></div>`).join("");$("adminModal").hidden=false}catch(e){toast(e.message)}};
-$("closeAdmin").onclick=()=>$("adminModal").hidden=true;
-window.resetUser=async u=>{const p=prompt(`New password for ${u}:`);if(!p)return;try{await api("adminResetPassword",{username:u,newPassword:p});toast("Password reset.")}catch(e){toast(e.message)}};
-window.deleteUser=async u=>{if(!confirm(`Delete ${u}?`))return;try{await api("adminDeleteUser",{username:u});$("settingsBtn").click();toast("User deleted.")}catch(e){toast(e.message)}};
-document.querySelectorAll(".nav-item[data-nav]").forEach(b=>b.onclick=()=>{document.querySelectorAll(".nav-item[data-nav]").forEach(x=>x.classList.remove("active"));b.classList.add("active");if(b.dataset.nav==="cards"||b.dataset.nav==="collections")document.querySelector(".card-grid").scrollIntoView({behavior:"smooth"})});
 
-(async()=>{const t=localStorage.getItem("pokemonToken");if(t){state.token=t;try{const j=await api("me");state.user=j.user; if(state.user.role==="admin")$("settingsBtn").hidden=false;await boot()}catch(e){localStorage.removeItem("pokemonToken")}}})();
+function getUsersSheet() {
+  return getDB().getSheetByName(CONFIG.USERS_SHEET);
+}
+
+function getOwnedSheet() {
+  return getDB().getSheetByName(CONFIG.OWNED_SHEET);
+}
+
+function jsonResponse(data) {
+  return ContentService
+    .createTextOutput(JSON.stringify(data))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function normalize(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function hashPassword(password) {
+  const signature = Utilities.computeHmacSha256Signature(
+    String(password),
+    CONFIG.SECRET_KEY
+  );
+
+  return signature
+    .map(function(byte) {
+      const value = (byte < 0 ? byte + 256 : byte).toString(16);
+      return value.length === 1 ? '0' + value : value;
+    })
+    .join('');
+}
+
+
+/* =========================
+   INITIAL SETUP
+========================= */
+
+function setupDatabase() {
+  const ss = getDB();
+
+  let users = ss.getSheetByName(CONFIG.USERS_SHEET);
+  if (!users) {
+    users = ss.insertSheet(CONFIG.USERS_SHEET);
+  }
+
+  if (users.getLastRow() === 0) {
+    users.appendRow([
+      'Username',
+      'Name',
+      'Email',
+      'Phone',
+      'Password Hash',
+      'Role',
+      'Created At',
+      'Status'
+    ]);
+  }
+
+  let owned = ss.getSheetByName(CONFIG.OWNED_SHEET);
+  if (!owned) {
+    owned = ss.insertSheet(CONFIG.OWNED_SHEET);
+  }
+
+  if (owned.getLastRow() === 0) {
+    owned.appendRow([
+      'Username',
+      'Set Name',
+      'Card ID',
+      'Owned',
+      'Updated At'
+    ]);
+  }
+
+  createAdmin();
+
+  return 'Database setup complete.';
+}
+
+
+/* =========================
+   ADMIN
+========================= */
+
+function createAdmin() {
+  const sheet = getUsersSheet();
+  const data = sheet.getDataRange().getValues();
+
+  for (let i = 1; i < data.length; i++) {
+    if (normalize(data[i][0]) === normalize(CONFIG.ADMIN_USERNAME)) {
+      return;
+    }
+  }
+
+  sheet.appendRow([
+    CONFIG.ADMIN_USERNAME,
+    'EXORDIUM Administrator',
+    '',
+    '',
+    hashPassword(CONFIG.ADMIN_PASSWORD),
+    'admin',
+    new Date(),
+    'active'
+  ]);
+}
+
+
+/* =========================
+   REGISTER
+========================= */
+
+function registerUser(data) {
+  const username = String(data.username || '').trim();
+  const name = String(data.name || '').trim();
+  const email = String(data.email || '').trim();
+  const phone = String(data.phone || '').trim();
+  const password = String(data.password || '');
+  const confirmPassword = String(data.confirmPassword || '');
+
+  if (!username || !name || !email || !phone || !password) {
+    return {
+      success: false,
+      message: 'All fields are required.'
+    };
+  }
+
+  if (password !== confirmPassword) {
+    return {
+      success: false,
+      message: 'Passwords do not match.'
+    };
+  }
+
+  if (password.length < 8) {
+    return {
+      success: false,
+      message: 'Password must contain at least 8 characters.'
+    };
+  }
+
+  if (!/^[a-zA-Z0-9_.-]+$/.test(username)) {
+    return {
+      success: false,
+      message: 'Username contains invalid characters.'
+    };
+  }
+
+  const sheet = getUsersSheet();
+  const rows = sheet.getDataRange().getValues();
+
+  for (let i = 1; i < rows.length; i++) {
+    const existingUsername = normalize(rows[i][0]);
+    const existingEmail = normalize(rows[i][2]);
+    const existingPhone = normalize(rows[i][3]);
+
+    if (existingUsername === normalize(username)) {
+      return {
+        success: false,
+        message: 'Username already exists.'
+      };
+    }
+
+    if (existingEmail === normalize(email)) {
+      return {
+        success: false,
+        message: 'Email already exists.'
+      };
+    }
+
+    if (existingPhone === normalize(phone)) {
+      return {
+        success: false,
+        message: 'Phone number already exists.'
+      };
+    }
+  }
+
+  sheet.appendRow([
+    username,
+    name,
+    email,
+    phone,
+    hashPassword(password),
+    'user',
+    new Date(),
+    'active'
+  ]);
+
+  return {
+    success: true,
+    message: 'Registration successful.'
+  };
+}
+
+
+/* =========================
+   LOGIN
+========================= */
+
+function loginUser(data) {
+  const identifier = normalize(data.identifier);
+  const password = String(data.password || '');
+
+  if (!identifier || !password) {
+    return {
+      success: false,
+      message: 'Please enter your login information.'
+    };
+  }
+
+  const sheet = getUsersSheet();
+  const rows = sheet.getDataRange().getValues();
+  const passwordHash = hashPassword(password);
+
+  for (let i = 1; i < rows.length; i++) {
+
+    const username = normalize(rows[i][0]);
+    const email = normalize(rows[i][2]);
+    const phone = normalize(rows[i][3]);
+    const storedHash = String(rows[i][4]);
+    const role = String(rows[i][5] || 'user');
+    const status = normalize(rows[i][7]);
+
+    const identifierMatches =
+      identifier === username ||
+      identifier === email ||
+      identifier === phone;
+
+    if (identifierMatches) {
+
+      if (status !== 'active') {
+        return {
+          success: false,
+          message: 'This account is not active.'
+        };
+      }
+
+      if (storedHash !== passwordHash) {
+        return {
+          success: false,
+          message: 'Incorrect password.'
+        };
+      }
+
+      const token = Utilities.getUuid();
+
+      CacheService
+        .getScriptCache()
+        .put(
+          'SESSION_' + token,
+          JSON.stringify({
+            username: rows[i][0],
+            name: rows[i][1],
+            role: role
+          }),
+          21600
+        );
+
+      return {
+        success: true,
+        token: token,
+        user: {
+          username: rows[i][0],
+          name: rows[i][1],
+          role: role
+        }
+      };
+    }
+  }
+
+  return {
+    success: false,
+    message: 'Account not found.'
+  };
+}
+
+
+/* =========================
+   SESSION
+========================= */
+
+function getSession(token) {
+  if (!token) {
+    return null;
+  }
+
+  const data = CacheService
+    .getScriptCache()
+    .get('SESSION_' + token);
+
+  if (!data) {
+    return null;
+  }
+
+  return JSON.parse(data);
+}
+
+function logoutUser(token) {
+  if (token) {
+    CacheService
+      .getScriptCache()
+      .remove('SESSION_' + token);
+  }
+
+  return {
+    success: true
+  };
+}
+
+
+/* =========================
+   GET CARD SETS
+========================= */
+
+function getSets() {
+  const ss = getDB();
+  const sheets = ss.getSheets();
+
+  const sets = [];
+
+  sheets.forEach(function(sheet) {
+
+    const name = sheet.getName();
+
+    if (
+      name === CONFIG.USERS_SHEET ||
+      name === CONFIG.OWNED_SHEET
+    ) {
+      return;
+    }
+
+    const data = sheet.getDataRange().getValues();
+
+    if (data.length < 2) {
+      return;
+    }
+
+    const headers = data[0].map(function(h) {
+      return String(h).trim();
+    });
+
+    sets.push({
+      name: name,
+      totalCards: data.length - 1,
+      headers: headers
+    });
+  });
+
+  return sets;
+}
+
+
+/* =========================
+   GET CARDS FROM SET
+========================= */
+
+function getCards(setName, token) {
+
+  const session = getSession(token);
+
+  if (!session) {
+    return {
+      success: false,
+      message: 'Session expired.'
+    };
+  }
+
+  const sheet = getDB().getSheetByName(setName);
+
+  if (!sheet) {
+    return {
+      success: false,
+      message: 'Set not found.'
+    };
+  }
+
+  const values = sheet.getDataRange().getValues();
+
+  if (values.length < 2) {
+    return {
+      success: true,
+      cards: []
+    };
+  }
+
+  const headers = values[0].map(function(h) {
+    return String(h).trim();
+  });
+
+  const cards = [];
+
+  for (let i = 1; i < values.length; i++) {
+
+    const row = values[i];
+
+    if (row.join('').trim() === '') {
+      continue;
+    }
+
+    const card = {};
+
+    headers.forEach(function(header, index) {
+      card[header] = row[index];
+    });
+
+    cards.push(card);
+  }
+
+  return {
+    success: true,
+    setName: setName,
+    cards: cards
+  };
+}
+
+
+/* =========================
+   OWNED STATUS
+========================= */
+
+function getOwnedCards(token, setName) {
+
+  const session = getSession(token);
+
+  if (!session) {
+    return {
+      success: false,
+      message: 'Session expired.'
+    };
+  }
+
+  const sheet = getOwnedSheet();
+  const rows = sheet.getDataRange().getValues();
+
+  const owned = {};
+
+  for (let i = 1; i < rows.length; i++) {
+
+    const username = normalize(rows[i][0]);
+    const currentSet = String(rows[i][1]);
+    const cardID = String(rows[i][2]);
+    const status = rows[i][3];
+
+    if (
+      username === normalize(session.username) &&
+      currentSet === setName
+    ) {
+      owned[cardID] =
+        status === true ||
+        normalize(status) === 'true';
+    }
+  }
+
+  return {
+    success: true,
+    owned: owned
+  };
+}
+
+
+function setOwned(token, setName, cardID, owned) {
+
+  const session = getSession(token);
+
+  if (!session) {
+    return {
+      success: false,
+      message: 'Session expired.'
+    };
+  }
+
+  const sheet = getOwnedSheet();
+  const rows = sheet.getDataRange().getValues();
+
+  const username = session.username;
+  const normalizedUsername = normalize(username);
+
+  for (let i = 1; i < rows.length; i++) {
+
+    if (
+      normalize(rows[i][0]) === normalizedUsername &&
+      String(rows[i][1]) === String(setName) &&
+      String(rows[i][2]) === String(cardID)
+    ) {
+
+      sheet.getRange(i + 1, 4).setValue(Boolean(owned));
+      sheet.getRange(i + 1, 5).setValue(new Date());
+
+      return {
+        success: true
+      };
+    }
+  }
+
+  sheet.appendRow([
+    username,
+    setName,
+    cardID,
+    Boolean(owned),
+    new Date()
+  ]);
+
+  return {
+    success: true
+  };
+}
+
+
+/* =========================
+   COLLECTION SUMMARY
+========================= */
+
+function getCollectionSummary(token, setName) {
+
+  const session = getSession(token);
+
+  if (!session) {
+    return {
+      success: false,
+      message: 'Session expired.'
+    };
+  }
+
+  const sheet = getDB().getSheetByName(setName);
+
+  if (!sheet) {
+    return {
+      success: false,
+      message: 'Set not found.'
+    };
+  }
+
+  const totalCards = Math.max(sheet.getLastRow() - 1, 0);
+
+  const ownedResult = getOwnedCards(token, setName);
+
+  if (!ownedResult.success) {
+    return ownedResult;
+  }
+
+  let ownedCount = 0;
+
+  Object.keys(ownedResult.owned).forEach(function(cardID) {
+    if (ownedResult.owned[cardID]) {
+      ownedCount++;
+    }
+  });
+
+  const percentage =
+    totalCards === 0
+      ? 0
+      : (ownedCount / totalCards) * 100;
+
+  return {
+    success: true,
+    totalCards: totalCards,
+    ownedCards: ownedCount,
+    percentage: Number(percentage.toFixed(2))
+  };
+}
+
+
+/* =========================
+   ADMIN FUNCTIONS
+========================= */
+
+function requireAdmin(token) {
+
+  const session = getSession(token);
+
+  if (!session || session.role !== 'admin') {
+    return null;
+  }
+
+  return session;
+}
+
+
+function getUserList(token) {
+
+  const admin = requireAdmin(token);
+
+  if (!admin) {
+    return {
+      success: false,
+      message: 'Admin access required.'
+    };
+  }
+
+  const sheet = getUsersSheet();
+  const rows = sheet.getDataRange().getValues();
+
+  const users = [];
+
+  for (let i = 1; i < rows.length; i++) {
+
+    users.push({
+      username: rows[i][0],
+      name: rows[i][1],
+      email: rows[i][2],
+      phone: rows[i][3],
+      role: rows[i][5],
+      createdAt: rows[i][6],
+      status: rows[i][7]
+    });
+  }
+
+  return {
+    success: true,
+    users: users
+  };
+}
+
+
+function resetUserPassword(token, username, newPassword) {
+
+  const admin = requireAdmin(token);
+
+  if (!admin) {
+    return {
+      success: false,
+      message: 'Admin access required.'
+    };
+  }
+
+  if (!newPassword || newPassword.length < 8) {
+    return {
+      success: false,
+      message: 'Password must contain at least 8 characters.'
+    };
+  }
+
+  const sheet = getUsersSheet();
+  const rows = sheet.getDataRange().getValues();
+
+  for (let i = 1; i < rows.length; i++) {
+
+    if (normalize(rows[i][0]) === normalize(username)) {
+
+      sheet
+        .getRange(i + 1, 5)
+        .setValue(hashPassword(newPassword));
+
+      return {
+        success: true,
+        message: 'Password reset successfully.'
+      };
+    }
+  }
+
+  return {
+    success: false,
+    message: 'User not found.'
+  };
+}
+
+
+function deleteUser(token, username) {
+
+  const admin = requireAdmin(token);
+
+  if (!admin) {
+    return {
+      success: false,
+      message: 'Admin access required.'
+    };
+  }
+
+  if (normalize(username) === normalize(CONFIG.ADMIN_USERNAME)) {
+    return {
+      success: false,
+      message: 'The admin account cannot be deleted.'
+    };
+  }
+
+  const sheet = getUsersSheet();
+  const rows = sheet.getDataRange().getValues();
+
+  for (let i = rows.length - 1; i >= 1; i--) {
+
+    if (normalize(rows[i][0]) === normalize(username)) {
+
+      sheet.deleteRow(i + 1);
+
+      return {
+        success: true,
+        message: 'User deleted.'
+      };
+    }
+  }
+
+  return {
+    success: false,
+    message: 'User not found.'
+  };
+}
+
+
+/* =========================
+   API
+========================= */
+
+function doGet(e) {
+
+  const action = e && e.parameter
+    ? e.parameter.action
+    : '';
+
+  const token = e && e.parameter
+    ? e.parameter.token
+    : '';
+
+  try {
+
+    if (action === 'sets') {
+      return jsonResponse({
+        success: true,
+        sets: getSets()
+      });
+    }
+
+    if (action === 'cards') {
+      return jsonResponse(
+        getCards(
+          e.parameter.setName,
+          token
+        )
+      );
+    }
+
+    if (action === 'owned') {
+      return jsonResponse(
+        getOwnedCards(
+          token,
+          e.parameter.setName
+        )
+      );
+    }
+
+    if (action === 'summary') {
+      return jsonResponse(
+        getCollectionSummary(
+          token,
+          e.parameter.setName
+        )
+      );
+    }
+
+    if (action === 'users') {
+      return jsonResponse(
+        getUserList(token)
+      );
+    }
+
+    return jsonResponse({
+      success: false,
+      message: 'Unknown action.'
+    });
+
+  } catch (error) {
+
+    return jsonResponse({
+      success: false,
+      message: error.message
+    });
+  }
+}
+
+
+function doPost(e) {
+
+  try {
+
+    const data = JSON.parse(
+      e.postData.contents
+    );
+
+    const action = data.action;
+
+    if (action === 'register') {
+      return jsonResponse(
+        registerUser(data)
+      );
+    }
+
+    if (action === 'login') {
+      return jsonResponse(
+        loginUser(data)
+      );
+    }
+
+    if (action === 'logout') {
+      return jsonResponse(
+        logoutUser(data.token)
+      );
+    }
+
+    if (action === 'setOwned') {
+      return jsonResponse(
+        setOwned(
+          data.token,
+          data.setName,
+          data.cardID,
+          data.owned
+        )
+      );
+    }
+
+    if (action === 'resetPassword') {
+      return jsonResponse(
+        resetUserPassword(
+          data.token,
+          data.username,
+          data.newPassword
+        )
+      );
+    }
+
+    if (action === 'deleteUser') {
+      return jsonResponse(
+        deleteUser(
+          data.token,
+          data.username
+        )
+      );
+    }
+
+    return jsonResponse({
+      success: false,
+      message: 'Unknown action.'
+    });
+
+  } catch (error) {
+
+    return jsonResponse({
+      success: false,
+      message: error.message
+    });
+  }
+}
