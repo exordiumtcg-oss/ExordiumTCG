@@ -1,4 +1,4 @@
-const API_URL="PASTE_YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL_HERE";
+const API_URL=""https://script.google.com/macros/s/AKfycbyaNd6MyhbsrlJIATUQcagVkk7AjO0j2kYOAZ7fbbaai1FptfIJHksqb2asPhZ5HlUlAA/exec";
 let state={token:null,user:null,sets:[],cards:[],owned:new Set(),currentSet:"",allOwned:0};
 
 const $=id=>document.getElementById(id);
