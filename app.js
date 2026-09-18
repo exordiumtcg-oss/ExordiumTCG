@@ -1,715 +1,36 @@
-const CONFIG = {
-  SHEET_ID: '1reGPAmWECa9M9s-Pujfp1fO-DHoGmU_msZFCm2TLwq8',
-  SECRET_KEY: 'EXOEXO',
-  USERS_SHEET: 'Users',
-  OWNED_SHEET: 'Owned',
-  ADMIN_USERNAME: 'admin',
-  ADMIN_PASSWORD: '12345678'
+const API_URL = "https://script.google.com/macros/s/AKfycbyaNd6MyhbsrlJIATUQcagVkk7AjO0j2kYOAZ7fbbaai1FptfIJHksqb2asPhZ5HlUlAA/exec";
+
+let state = {
+  token: null,
+  user: null,
+  sets: [],
+  cards: [],
+  owned: new Set(),
+  currentSet: "",
+  allOwned: 0
 };
 
-
-/* =========================
-   BASIC HELPERS
-========================= */
-
-function getDB() {
-  return SpreadsheetApp.openById(CONFIG.SHEET_ID);
-}
-
-function getUsersSheet() {
-  return getDB().getSheetByName(CONFIG.USERS_SHEET);
-}
-
-function getOwnedSheet() {
-  return getDB().getSheetByName(CONFIG.OWNED_SHEET);
-}
-
-function jsonResponse(data) {
-  return ContentService
-    .createTextOutput(JSON.stringify(data))
-    .setMimeType(ContentService.MimeType.JSON);
-}
-
-function normalize(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function hashPassword(password) {
-  const signature = Utilities.computeHmacSha256Signature(
-    String(password),
-    CONFIG.SECRET_KEY
-  );
-
-  return signature
-    .map(function(byte) {
-      const value = (byte < 0 ? byte + 256 : byte).toString(16);
-      return value.length === 1 ? '0' + value : value;
-    })
-    .join('');
-}
-
-
-/* =========================
-   INITIAL SETUP
-========================= */
-
-function setupDatabase() {
-  const ss = getDB();
-
-  let users = ss.getSheetByName(CONFIG.USERS_SHEET);
-  if (!users) {
-    users = ss.insertSheet(CONFIG.USERS_SHEET);
-  }
-
-  if (users.getLastRow() === 0) {
-    users.appendRow([
-      'Username',
-      'Name',
-      'Email',
-      'Phone',
-      'Password Hash',
-      'Role',
-      'Created At',
-      'Status'
-    ]);
-  }
-
-  let owned = ss.getSheetByName(CONFIG.OWNED_SHEET);
-  if (!owned) {
-    owned = ss.insertSheet(CONFIG.OWNED_SHEET);
-  }
-
-  if (owned.getLastRow() === 0) {
-    owned.appendRow([
-      'Username',
-      'Set Name',
-      'Card ID',
-      'Owned',
-      'Updated At'
-    ]);
-  }
-
-  createAdmin();
-
-  return 'Database setup complete.';
-}
-
-
-/* =========================
-   ADMIN
-========================= */
-
-function createAdmin() {
-  const sheet = getUsersSheet();
-  const data = sheet.getDataRange().getValues();
-
-  for (let i = 1; i < data.length; i++) {
-    if (normalize(data[i][0]) === normalize(CONFIG.ADMIN_USERNAME)) {
-      return;
-    }
-  }
-
-  sheet.appendRow([
-    CONFIG.ADMIN_USERNAME,
-    'EXORDIUM Administrator',
-    '',
-    '',
-    hashPassword(CONFIG.ADMIN_PASSWORD),
-    'admin',
-    new Date(),
-    'active'
-  ]);
-}
-
-
-/* =========================
-   REGISTER
-========================= */
-
-function registerUser(data) {
-  const username = String(data.username || '').trim();
-  const name = String(data.name || '').trim();
-  const email = String(data.email || '').trim();
-  const phone = String(data.phone || '').trim();
-  const password = String(data.password || '');
-  const confirmPassword = String(data.confirmPassword || '');
-
-  if (!username || !name || !email || !phone || !password) {
-    return {
-      success: false,
-      message: 'All fields are required.'
-    };
-  }
-
-  if (password !== confirmPassword) {
-    return {
-      success: false,
-      message: 'Passwords do not match.'
-    };
-  }
-
-  if (password.length < 8) {
-    return {
-      success: false,
-      message: 'Password must contain at least 8 characters.'
-    };
-  }
-
-  if (!/^[a-zA-Z0-9_.-]+$/.test(username)) {
-    return {
-      success: false,
-      message: 'Username contains invalid characters.'
-    };
-  }
-
-  const sheet = getUsersSheet();
-  const rows = sheet.getDataRange().getValues();
-
-  for (let i = 1; i < rows.length; i++) {
-    const existingUsername = normalize(rows[i][0]);
-    const existingEmail = normalize(rows[i][2]);
-    const existingPhone = normalize(rows[i][3]);
-
-    if (existingUsername === normalize(username)) {
-      return {
-        success: false,
-        message: 'Username already exists.'
-      };
-    }
-
-    if (existingEmail === normalize(email)) {
-      return {
-        success: false,
-        message: 'Email already exists.'
-      };
-    }
-
-    if (existingPhone === normalize(phone)) {
-      return {
-        success: false,
-        message: 'Phone number already exists.'
-      };
-    }
-  }
-
-  sheet.appendRow([
-    username,
-    name,
-    email,
-    phone,
-    hashPassword(password),
-    'user',
-    new Date(),
-    'active'
-  ]);
-
-  return {
-    success: true,
-    message: 'Registration successful.'
-  };
-}
-
-
-/* =========================
-   LOGIN
-========================= */
-
-function loginUser(data) {
-  const identifier = normalize(data.identifier);
-  const password = String(data.password || '');
-
-  if (!identifier || !password) {
-    return {
-      success: false,
-      message: 'Please enter your login information.'
-    };
-  }
-
-  const sheet = getUsersSheet();
-  const rows = sheet.getDataRange().getValues();
-  const passwordHash = hashPassword(password);
-
-  for (let i = 1; i < rows.length; i++) {
-
-    const username = normalize(rows[i][0]);
-    const email = normalize(rows[i][2]);
-    const phone = normalize(rows[i][3]);
-    const storedHash = String(rows[i][4]);
-    const role = String(rows[i][5] || 'user');
-    const status = normalize(rows[i][7]);
-
-    const identifierMatches =
-      identifier === username ||
-      identifier === email ||
-      identifier === phone;
-
-    if (identifierMatches) {
-
-      if (status !== 'active') {
-        return {
-          success: false,
-          message: 'This account is not active.'
-        };
-      }
-
-      if (storedHash !== passwordHash) {
-        return {
-          success: false,
-          message: 'Incorrect password.'
-        };
-      }
-
-      const token = Utilities.getUuid();
-
-      CacheService
-        .getScriptCache()
-        .put(
-          'SESSION_' + token,
-          JSON.stringify({
-            username: rows[i][0],
-            name: rows[i][1],
-            role: role
-          }),
-          21600
-        );
-
-      return {
-        success: true,
-        token: token,
-        user: {
-          username: rows[i][0],
-          name: rows[i][1],
-          role: role
-        }
-      };
-    }
-  }
-
-  return {
-    success: false,
-    message: 'Account not found.'
-  };
-}
-
-
-/* =========================
-   SESSION
-========================= */
-
-function getSession(token) {
-  if (!token) {
-    return null;
-  }
-
-  const data = CacheService
-    .getScriptCache()
-    .get('SESSION_' + token);
-
-  if (!data) {
-    return null;
-  }
-
-  return JSON.parse(data);
-}
-
-function logoutUser(token) {
-  if (token) {
-    CacheService
-      .getScriptCache()
-      .remove('SESSION_' + token);
-  }
-
-  return {
-    success: true
-  };
-}
-
-
-/* =========================
-   GET CARD SETS
-========================= */
-
-function getSets() {
-  const ss = getDB();
-  const sheets = ss.getSheets();
-
-  const sets = [];
-
-  sheets.forEach(function(sheet) {
-
-    const name = sheet.getName();
-
-    if (
-      name === CONFIG.USERS_SHEET ||
-      name === CONFIG.OWNED_SHEET
-    ) {
-      return;
-    }
-
-    const data = sheet.getDataRange().getValues();
-
-    if (data.length < 2) {
-      return;
-    }
-
-    const headers = data[0].map(function(h) {
-      return String(h).trim();
-    });
-
-    sets.push({
-      name: name,
-      totalCards: data.length - 1,
-      headers: headers
-    });
-  });
-
-  return sets;
-}
-
-
-/* =========================
-   GET CARDS FROM SET
-========================= */
-
-function getCards(setName, token) {
-
-  const session = getSession(token);
-
-  if (!session) {
-    return {
-      success: false,
-      message: 'Session expired.'
-    };
-  }
-
-  const sheet = getDB().getSheetByName(setName);
-
-  if (!sheet) {
-    return {
-      success: false,
-      message: 'Set not found.'
-    };
-  }
-
-  const values = sheet.getDataRange().getValues();
-
-  if (values.length < 2) {
-    return {
-      success: true,
-      cards: []
-    };
-  }
-
-  const headers = values[0].map(function(h) {
-    return String(h).trim();
-  });
-
-  const cards = [];
-
-  for (let i = 1; i < values.length; i++) {
-
-    const row = values[i];
-
-    if (row.join('').trim() === '') {
-      continue;
-    }
-
-    const card = {};
-
-    headers.forEach(function(header, index) {
-      card[header] = row[index];
-    });
-
-    cards.push(card);
-  }
-
-  return {
-    success: true,
-    setName: setName,
-    cards: cards
-  };
-}
-
-
-/* =========================
-   OWNED STATUS
-========================= */
-
-function getOwnedCards(token, setName) {
-
-  const session = getSession(token);
-
-  if (!session) {
-    return {
-      success: false,
-      message: 'Session expired.'
-    };
-  }
-
-  const sheet = getOwnedSheet();
-  const rows = sheet.getDataRange().getValues();
-
-  const owned = {};
-
-  for (let i = 1; i < rows.length; i++) {
-
-    const username = normalize(rows[i][0]);
-    const currentSet = String(rows[i][1]);
-    const cardID = String(rows[i][2]);
-    const status = rows[i][3];
-
-    if (
-      username === normalize(session.username) &&
-      currentSet === setName
-    ) {
-      owned[cardID] =
-        status === true ||
-        normalize(status) === 'true';
-    }
-  }
-
-  return {
-    success: true,
-    owned: owned
-  };
-}
-
-
-function setOwned(token, setName, cardID, owned) {
-
-  const session = getSession(token);
-
-  if (!session) {
-    return {
-      success: false,
-      message: 'Session expired.'
-    };
-  }
-
-  const sheet = getOwnedSheet();
-  const rows = sheet.getDataRange().getValues();
-
-  const username = session.username;
-  const normalizedUsername = normalize(username);
-
-  for (let i = 1; i < rows.length; i++) {
-
-    if (
-      normalize(rows[i][0]) === normalizedUsername &&
-      String(rows[i][1]) === String(setName) &&
-      String(rows[i][2]) === String(cardID)
-    ) {
-
-      sheet.getRange(i + 1, 4).setValue(Boolean(owned));
-      sheet.getRange(i + 1, 5).setValue(new Date());
-
-      return {
-        success: true
-      };
-    }
-  }
-
-  sheet.appendRow([
-    username,
-    setName,
-    cardID,
-    Boolean(owned),
-    new Date()
-  ]);
-
-  return {
-    success: true
-  };
-}
-
-
-/* =========================
-   COLLECTION SUMMARY
-========================= */
-
-function getCollectionSummary(token, setName) {
-
-  const session = getSession(token);
-
-  if (!session) {
-    return {
-      success: false,
-      message: 'Session expired.'
-    };
-  }
-
-  const sheet = getDB().getSheetByName(setName);
-
-  if (!sheet) {
-    return {
-      success: false,
-      message: 'Set not found.'
-    };
-  }
-
-  const totalCards = Math.max(sheet.getLastRow() - 1, 0);
-
-  const ownedResult = getOwnedCards(token, setName);
-
-  if (!ownedResult.success) {
-    return ownedResult;
-  }
-
-  let ownedCount = 0;
-
-  Object.keys(ownedResult.owned).forEach(function(cardID) {
-    if (ownedResult.owned[cardID]) {
-      ownedCount++;
-    }
-  });
-
-  const percentage =
-    totalCards === 0
-      ? 0
-      : (ownedCount / totalCards) * 100;
-
-  return {
-    success: true,
-    totalCards: totalCards,
-    ownedCards: ownedCount,
-    percentage: Number(percentage.toFixed(2))
-  };
-}
-
-
-/* =========================
-   ADMIN FUNCTIONS
-========================= */
-
-function requireAdmin(token) {
-
-  const session = getSession(token);
-
-  if (!session || session.role !== 'admin') {
-    return null;
-  }
-
-  return session;
-}
-
-
-function getUserList(token) {
-
-  const admin = requireAdmin(token);
-
-  if (!admin) {
-    return {
-      success: false,
-      message: 'Admin access required.'
-    };
-  }
-
-  const sheet = getUsersSheet();
-  const rows = sheet.getDataRange().getValues();
-
-  const users = [];
-
-  for (let i = 1; i < rows.length; i++) {
-
-    users.push({
-      username: rows[i][0],
-      name: rows[i][1],
-      email: rows[i][2],
-      phone: rows[i][3],
-      role: rows[i][5],
-      createdAt: rows[i][6],
-      status: rows[i][7]
-    });
-  }
-
-  return {
-    success: true,
-    users: users
-  };
-}
-
-
-function resetUserPassword(token, username, newPassword) {
-
-  const admin = requireAdmin(token);
-
-  if (!admin) {
-    return {
-      success: false,
-      message: 'Admin access required.'
-    };
-  }
-
-  if (!newPassword || newPassword.length < 8) {
-    return {
-      success: false,
-      message: 'Password must contain at least 8 characters.'
-    };
-  }
-
-  const sheet = getUsersSheet();
-  const rows = sheet.getDataRange().getValues();
-
-  for (let i = 1; i < rows.length; i++) {
-
-    if (normalize(rows[i][0]) === normalize(username)) {
-
-      sheet
-        .getRange(i + 1, 5)
-        .setValue(hashPassword(newPassword));
-
-      return {
-        success: true,
-        message: 'Password reset successfully.'
-      };
-    }
-  }
-
-  return {
-    success: false,
-    message: 'User not found.'
-  };
-}
-
-
-function deleteUser(token, username) {
-
-  const admin = requireAdmin(token);
-
-  if (!admin) {
-    return {
-      success: false,
-      message: 'Admin access required.'
-    };
-  }
-
-  if (normalize(username) === normalize(CONFIG.ADMIN_USERNAME)) {
-    return {
-      success: false,
-      message: 'The admin account cannot be deleted.'
-    };
-  }
-
-  const sheet = getUsersSheet();
-  const rows = sheet.getDataRange().getValues();
-
-  for (let i = rows.length - 1; i >= 1; i--) {
-
-    if (normalize(rows[i][0]) === normalize(username)) {
-
-      sheet.deleteRow(i + 1);
-
-      return {
-        success: true,
-        message: 'User deleted.'
-      };
-    }
-  }
-
-  return {
-    success: false,
-    message: 'User not found.'
-  };
+const $ = id => document.getElementById(id);
+
+const esc = s =>
+  String(s ?? "").replace(/[&<>"']/g, m => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  }[m]));
+
+function toast(msg) {
+  const el = $("toast");
+  if (!el) return;
+
+  el.textContent = msg;
+  el.style.display = "block";
+
+  setTimeout(() => {
+    el.style.display = "none";
+  }, 2800);
 }
 
 
@@ -717,141 +38,911 @@ function deleteUser(token, username) {
    API
 ========================= */
 
-function doGet(e) {
+async function apiGet(action, data = {}) {
+  const params = new URLSearchParams({
+    action,
+    ...data,
+    token: state.token || ""
+  });
 
-  const action = e && e.parameter
-    ? e.parameter.action
-    : '';
+  const response = await fetch(`${API_URL}?${params.toString()}`);
+  const json = await response.json();
 
-  const token = e && e.parameter
-    ? e.parameter.token
-    : '';
+  if (json.success === false) {
+    throw new Error(json.message || "Request failed.");
+  }
 
-  try {
+  return json;
+}
 
-    if (action === 'sets') {
-      return jsonResponse({
-        success: true,
-        sets: getSets()
-      });
-    }
 
-    if (action === 'cards') {
-      return jsonResponse(
-        getCards(
-          e.parameter.setName,
-          token
-        )
-      );
-    }
+async function apiPost(action, data = {}) {
+  const response = await fetch(API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "text/plain;charset=utf-8"
+    },
+    body: JSON.stringify({
+      action,
+      ...data,
+      token: state.token
+    })
+  });
 
-    if (action === 'owned') {
-      return jsonResponse(
-        getOwnedCards(
-          token,
-          e.parameter.setName
-        )
-      );
-    }
+  const json = await response.json();
 
-    if (action === 'summary') {
-      return jsonResponse(
-        getCollectionSummary(
-          token,
-          e.parameter.setName
-        )
-      );
-    }
+  if (json.success === false) {
+    throw new Error(json.message || "Request failed.");
+  }
 
-    if (action === 'users') {
-      return jsonResponse(
-        getUserList(token)
-      );
-    }
+  return json;
+}
 
-    return jsonResponse({
-      success: false,
-      message: 'Unknown action.'
-    });
 
-  } catch (error) {
+/* =========================
+   AUTH TABS
+========================= */
 
-    return jsonResponse({
-      success: false,
-      message: error.message
-    });
+document.querySelectorAll(".auth-tab").forEach(button => {
+  button.onclick = () => showAuth(button.dataset.auth);
+});
+
+
+function showAuth(mode) {
+  document.querySelectorAll(".auth-tab").forEach(button => {
+    button.classList.toggle(
+      "active",
+      button.dataset.auth === mode
+    );
+  });
+
+  if ($("loginForm")) {
+    $("loginForm").hidden = mode !== "login";
+  }
+
+  if ($("registerForm")) {
+    $("registerForm").hidden = mode !== "register";
   }
 }
 
 
-function doPost(e) {
+/* =========================
+   LOGIN
+========================= */
+
+$("loginForm").onsubmit = async e => {
+  e.preventDefault();
+
+  const identifier = $("loginIdentity").value.trim();
+  const password = $("loginPassword").value;
+
+  if (!identifier || !password) {
+    toast("Please enter your login information.");
+    return;
+  }
+
+  try {
+    const result = await apiPost("login", {
+      identifier: identifier,
+      password: password
+    });
+
+    state.token = result.token;
+    state.user = result.user;
+
+    localStorage.setItem("pokemonToken", state.token);
+
+    await boot();
+
+  } catch (error) {
+    toast(error.message);
+  }
+};
+
+
+$("loginPassword").onkeydown = e => {
+  if (e.key === "Enter") {
+    $("loginForm").requestSubmit();
+  }
+};
+
+
+/* =========================
+   REGISTER
+========================= */
+
+$("registerForm").onsubmit = async e => {
+  e.preventDefault();
+
+  const password = $("regPassword").value;
+  const confirmPassword = $("regPassword2").value;
+
+  if (password !== confirmPassword) {
+    toast("Passwords do not match.");
+    return;
+  }
+
+  try {
+    await apiPost("register", {
+      username: $("regUsername").value.trim(),
+      name: $("regName").value.trim(),
+      email: $("regEmail").value.trim(),
+      phone: $("regPhone").value.trim(),
+      password: password,
+      confirmPassword: confirmPassword
+    });
+
+    toast("Account created. Please log in.");
+
+    showAuth("login");
+
+    $("loginIdentity").value =
+      $("regUsername").value.trim();
+
+  } catch (error) {
+    toast(error.message);
+  }
+};
+
+
+/* =========================
+   BOOT APP
+========================= */
+
+async function boot() {
+
+  $("authView").hidden = true;
+  $("appView").hidden = false;
+
+  if (
+    state.user &&
+    state.user.role === "admin" &&
+    $("settingsBtn")
+  ) {
+    $("settingsBtn").hidden = false;
+  }
+
+  try {
+    const result = await apiGet("sets");
+
+    state.sets = result.sets || [];
+
+    renderSets();
+
+    if (state.sets.length > 0) {
+      await loadSet(state.sets[state.sets.length - 1].name);
+    }
+
+    await loadTotals();
+
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+
+/* =========================
+   SETS
+========================= */
+
+function renderSets() {
+
+  const select = $("setSelect");
+
+  if (!select) return;
+
+  select.innerHTML = state.sets
+    .map(set => `
+      <option value="${esc(set.name)}">
+        ${esc(set.name)}
+      </option>
+    `)
+    .join("");
+
+  select.onchange = () => {
+    loadSet(select.value);
+  };
+
+  if ($("openLatestBtn")) {
+    $("openLatestBtn").onclick = () => {
+      if (state.sets.length > 0) {
+        loadSet(state.sets[state.sets.length - 1].name);
+      }
+    };
+  }
+}
+
+
+/* =========================
+   LOAD SET
+========================= */
+
+async function loadSet(name) {
+
+  if (!name) return;
+
+  state.currentSet = name;
+
+  if ($("setSelect")) {
+    $("setSelect").value = name;
+  }
 
   try {
 
-    const data = JSON.parse(
-      e.postData.contents
+    const cardsResult = await apiGet("cards", {
+      setName: name
+    });
+
+    const ownedResult = await apiGet("owned", {
+      setName: name
+    });
+
+    state.cards = cardsResult.cards || [];
+
+    const ownedObject = ownedResult.owned || {};
+
+    state.owned = new Set(
+      Object.keys(ownedObject).filter(
+        id => ownedObject[id] === true
+      )
     );
 
-    const action = data.action;
-
-    if (action === 'register') {
-      return jsonResponse(
-        registerUser(data)
-      );
+    if ($("setTitle")) {
+      $("setTitle").textContent = name;
     }
 
-    if (action === 'login') {
-      return jsonResponse(
-        loginUser(data)
-      );
+    if ($("setMeta")) {
+      $("setMeta").textContent =
+        `${state.cards.length} cards in this series`;
     }
 
-    if (action === 'logout') {
-      return jsonResponse(
-        logoutUser(data.token)
-      );
+    if ($("featureTitle")) {
+      $("featureTitle").textContent = name;
     }
 
-    if (action === 'setOwned') {
-      return jsonResponse(
-        setOwned(
-          data.token,
-          data.setName,
-          data.cardID,
-          data.owned
-        )
-      );
+    if ($("featureChip")) {
+      $("featureChip").textContent =
+        state.cards[0]?.setCode || "SET";
     }
 
-    if (action === 'resetPassword') {
-      return jsonResponse(
-        resetUserPassword(
-          data.token,
-          data.username,
-          data.newPassword
-        )
-      );
+    if ($("featureImage")) {
+      if (state.cards[0]?.imageUrl) {
+        $("featureImage").src =
+          state.cards[0].imageUrl;
+      } else {
+        $("featureImage").removeAttribute("src");
+      }
     }
 
-    if (action === 'deleteUser') {
-      return jsonResponse(
-        deleteUser(
-          data.token,
-          data.username
-        )
-      );
+    renderRarities();
+    renderCards();
+    renderProgress();
+
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+
+/* =========================
+   RARITIES
+========================= */
+
+function renderRarities() {
+
+  const values = [
+    ...new Set(
+      state.cards
+        .map(card => card.rarity)
+        .filter(Boolean)
+    )
+  ].sort();
+
+  if (!$("raritySelect")) return;
+
+  $("raritySelect").innerHTML =
+    '<option value="">All Rarities</option>' +
+    values
+      .map(value => `
+        <option value="${esc(value)}">
+          ${esc(value)}
+        </option>
+      `)
+      .join("");
+}
+
+
+/* =========================
+   FILTER
+========================= */
+
+function filteredCards() {
+
+  const q =
+    $("search")?.value.trim().toLowerCase() || "";
+
+  const rarity =
+    $("raritySelect")?.value || "";
+
+  const sort =
+    $("sortSelect")?.value || "number";
+
+  let cards = state.cards.filter(card => {
+
+    const matchesSearch =
+      !q ||
+      String(card.id)
+        .toLowerCase()
+        .includes(q) ||
+      String(card.name)
+        .toLowerCase()
+        .includes(q);
+
+    const matchesRarity =
+      !rarity ||
+      card.rarity === rarity;
+
+    return matchesSearch && matchesRarity;
+  });
+
+  cards.sort((a, b) => {
+
+    if (sort === "name") {
+      return String(a.name)
+        .localeCompare(String(b.name));
     }
 
-    return jsonResponse({
-      success: false,
-      message: 'Unknown action.'
+    return String(a.id).localeCompare(
+      String(b.id),
+      undefined,
+      { numeric: true }
+    );
+  });
+
+  return cards;
+}
+
+
+/* =========================
+   RENDER CARDS
+========================= */
+
+function renderCards() {
+
+  const container = $("cards");
+
+  if (!container) return;
+
+  const cards = filteredCards();
+
+  container.innerHTML = cards
+    .map(card => {
+
+      const owned =
+        state.owned.has(String(card.id));
+
+      return `
+        <article class="card-item ${owned ? "owned" : ""}">
+
+          <div class="card-img">
+
+            ${
+              owned
+                ? '<span class="owned-badge">OWNED</span>'
+                : ""
+            }
+
+            <img
+              loading="lazy"
+              src="${esc(card.imageUrl)}"
+              alt="${esc(card.name)}"
+              onerror="this.style.opacity=.15"
+            >
+
+          </div>
+
+          <div
+            class="card-name"
+            title="${esc(card.name)}"
+          >
+            ${esc(card.name)}
+          </div>
+
+          <div class="card-number">
+            ${esc(card.id)}
+            /
+            ${esc(card.totalSetNumber)}
+          </div>
+
+          <div class="card-bottom">
+
+            <span class="rarity">
+              ${esc(card.rarity || "")}
+            </span>
+
+            <label class="check">
+
+              <input
+                type="checkbox"
+                data-id="${esc(card.id)}"
+                ${owned ? "checked" : ""}
+              >
+
+              Owned
+
+            </label>
+
+          </div>
+
+        </article>
+      `;
+    })
+    .join("");
+
+  if ($("empty")) {
+    $("empty").hidden = cards.length > 0;
+  }
+
+  document
+    .querySelectorAll(".check input")
+    .forEach(input => {
+
+      input.onchange = () => {
+        toggleOwned(
+          input.dataset.id,
+          input.checked
+        );
+      };
+
     });
+}
+
+
+/* =========================
+   OWNED
+========================= */
+
+async function toggleOwned(id, checked) {
+
+  const cardId = String(id);
+
+  if (checked) {
+    state.owned.add(cardId);
+  } else {
+    state.owned.delete(cardId);
+  }
+
+  renderCards();
+  renderProgress();
+
+  try {
+
+    await apiPost("setOwned", {
+      setName: state.currentSet,
+      cardID: cardId,
+      owned: checked
+    });
+
+    await loadTotals();
 
   } catch (error) {
 
-    return jsonResponse({
-      success: false,
-      message: error.message
-    });
+    toast(error.message);
+
+    // Reload from server if save failed
+    await loadSet(state.currentSet);
   }
 }
+
+
+/* =========================
+   PROGRESS
+========================= */
+
+function renderProgress() {
+
+  const total = state.cards.length;
+  const owned = state.owned.size;
+
+  const percent =
+    total
+      ? Math.round((owned / total) * 100)
+      : 0;
+
+  if ($("setPercent")) {
+    $("setPercent").textContent =
+      percent + "%";
+  }
+
+  if ($("progressBar")) {
+    $("progressBar").style.width =
+      percent + "%";
+  }
+
+  if ($("featureOwned")) {
+    $("featureOwned").textContent = owned;
+  }
+
+  if ($("featureTotal")) {
+    $("featureTotal").textContent = total;
+  }
+}
+
+
+/* =========================
+   TOTAL COLLECTION
+========================= */
+
+async function loadTotals() {
+
+  try {
+
+    const result = await apiGet("summary", {
+      setName: state.currentSet
+    });
+
+    const total =
+      Number(result.totalCards || 0);
+
+    const owned =
+      Number(result.ownedCards || 0);
+
+    const missing =
+      Math.max(0, total - owned);
+
+    const percent =
+      Number(result.percentage || 0);
+
+    state.allOwned = owned;
+
+    if ($("totalCards")) {
+      $("totalCards").textContent = total;
+    }
+
+    if ($("totalOwned")) {
+      $("totalOwned").textContent = owned;
+    }
+
+    if ($("totalMissing")) {
+      $("totalMissing").textContent = missing;
+    }
+
+    if ($("totalPercent")) {
+      $("totalPercent").textContent =
+        Math.round(percent) + "%";
+    }
+
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+
+/* =========================
+   SEARCH / SORT
+========================= */
+
+if ($("search")) {
+  $("search").oninput = renderCards;
+}
+
+if ($("raritySelect")) {
+  $("raritySelect").onchange = renderCards;
+}
+
+if ($("sortSelect")) {
+  $("sortSelect").onchange = renderCards;
+}
+
+
+/* =========================
+   SYNC
+========================= */
+
+if ($("syncBtn")) {
+
+  $("syncBtn").onclick = async () => {
+
+    try {
+
+      await loadSet(state.currentSet);
+      await loadTotals();
+
+      toast("Synced with Google Sheets.");
+
+    } catch (error) {
+      toast(error.message);
+    }
+
+  };
+
+}
+
+
+/* =========================
+   LOGOUT
+========================= */
+
+if ($("logoutBtn")) {
+
+  $("logoutBtn").onclick = async () => {
+
+    try {
+      if (state.token) {
+        await apiPost("logout");
+      }
+    } catch (error) {
+      console.error(error);
+    }
+
+    localStorage.removeItem("pokemonToken");
+
+    location.reload();
+  };
+
+}
+
+
+/* =========================
+   THEME
+========================= */
+
+if ($("themeBtn")) {
+
+  $("themeBtn").onclick = () => {
+    document.body.classList.toggle("light");
+  };
+
+}
+
+
+/* =========================
+   CTRL + K SEARCH
+========================= */
+
+document.addEventListener("keydown", e => {
+
+  if (
+    (e.ctrlKey || e.metaKey) &&
+    e.key.toLowerCase() === "k"
+  ) {
+
+    e.preventDefault();
+
+    if ($("search")) {
+      $("search").focus();
+    }
+
+  }
+
+});
+
+
+/* =========================
+   ADMIN USERS
+========================= */
+
+if ($("settingsBtn")) {
+
+  $("settingsBtn").onclick = async () => {
+
+    try {
+
+      const result = await apiGet("users");
+
+      if ($("usersTable")) {
+
+        $("usersTable").innerHTML =
+          (result.users || [])
+            .map(user => `
+              <div class="user-row">
+
+                <div>
+                  <b>${esc(user.username)}</b>
+                  <div class="muted">
+                    ${esc(user.name)}
+                  </div>
+                </div>
+
+                <div>
+                  ${esc(user.email)}
+                </div>
+
+                <div>
+                  ${esc(user.phone)}
+                </div>
+
+                <div>
+                  ${esc(user.role)}
+                </div>
+
+                <button
+                  class="mini"
+                  onclick="resetUser('${esc(user.username)}')"
+                >
+                  Reset password
+                </button>
+
+                <button
+                  class="danger"
+                  onclick="deleteUser('${esc(user.username)}')"
+                >
+                  Delete
+                </button>
+
+              </div>
+            `)
+            .join("");
+      }
+
+      if ($("adminModal")) {
+        $("adminModal").hidden = false;
+      }
+
+    } catch (error) {
+      toast(error.message);
+    }
+
+  };
+
+}
+
+
+/* =========================
+   CLOSE ADMIN
+========================= */
+
+if ($("closeAdmin")) {
+
+  $("closeAdmin").onclick = () => {
+    $("adminModal").hidden = true;
+  };
+
+}
+
+
+/* =========================
+   ADMIN RESET PASSWORD
+========================= */
+
+window.resetUser = async username => {
+
+  const newPassword =
+    prompt(`New password for ${username}:`);
+
+  if (!newPassword) return;
+
+  try {
+
+    await apiPost("resetPassword", {
+      username: username,
+      newPassword: newPassword
+    });
+
+    toast("Password reset successfully.");
+
+  } catch (error) {
+    toast(error.message);
+  }
+
+};
+
+
+/* =========================
+   ADMIN DELETE USER
+========================= */
+
+window.deleteUser = async username => {
+
+  if (!confirm(`Delete ${username}?`)) {
+    return;
+  }
+
+  try {
+
+    await apiPost("deleteUser", {
+      username: username
+    });
+
+    toast("User deleted.");
+
+    if ($("settingsBtn")) {
+      $("settingsBtn").click();
+    }
+
+  } catch (error) {
+    toast(error.message);
+  }
+
+};
+
+
+/* =========================
+   NAVIGATION
+========================= */
+
+document
+  .querySelectorAll(".nav-item[data-nav]")
+  .forEach(button => {
+
+    button.onclick = () => {
+
+      document
+        .querySelectorAll(".nav-item[data-nav]")
+        .forEach(item =>
+          item.classList.remove("active")
+        );
+
+      button.classList.add("active");
+
+      if (
+        button.dataset.nav === "cards" ||
+        button.dataset.nav === "collections"
+      ) {
+
+        const grid =
+          document.querySelector(".card-grid");
+
+        if (grid) {
+          grid.scrollIntoView({
+            behavior: "smooth"
+          });
+        }
+
+      }
+
+    };
+
+  });
+
+
+/* =========================
+   AUTO LOGIN
+========================= */
+
+(async () => {
+
+  const token =
+    localStorage.getItem("pokemonToken");
+
+  if (!token) return;
+
+  state.token = token;
+
+  try {
+
+    // There is no "me" endpoint in your Apps Script.
+    // We validate the token by requesting the sets
+    // and then loading the collection.
+
+    const result = await apiGet("sets");
+
+    state.sets = result.sets || [];
+
+    if (state.sets.length === 0) {
+      throw new Error("No card sets found.");
+    }
+
+    $("authView").hidden = true;
+    $("appView").hidden = false;
+
+    renderSets();
+
+    await loadSet(
+      state.sets[state.sets.length - 1].name
+    );
+
+    await loadTotals();
+
+  } catch (error) {
+
+    console.error(error);
+
+    localStorage.removeItem("pokemonToken");
+
+    state.token = null;
+    state.user = null;
+
+  }
+
+})();
